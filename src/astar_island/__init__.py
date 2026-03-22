@@ -9,6 +9,12 @@ from .offline_emulator import (
     run_offline_round,
 )
 from .parsing import load_json, parse_analysis_seed, parse_round_detail, parse_round_score
+from .priors import (
+    PriorConfig,
+    baseline_prior_for_round,
+    baseline_prior_from_initial_grid,
+    dynamic_importance_from_prior,
+)
 from .round_data import (
     LeaveOneRoundOutSplit,
     RoundRecord,
@@ -24,11 +30,15 @@ __all__ = [
     "LeaveOneRoundOutSplit",
     "OfflineRoundResult",
     "OfflineRoundState",
+    "PriorConfig",
     "RoundRecord",
     "RoundSeedRecord",
     "SeedEvaluation",
     "ViewportObservation",
     "ViewportQuery",
+    "baseline_prior_for_round",
+    "baseline_prior_from_initial_grid",
+    "dynamic_importance_from_prior",
     "floor_and_normalize",
     "leave_one_round_out_splits",
     "load_json",
