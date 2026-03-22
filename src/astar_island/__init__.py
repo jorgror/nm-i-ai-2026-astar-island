@@ -75,7 +75,14 @@ from .round_latent import (
     RoundLatentVector,
 )
 from .scoring import score_round, score_seed, weighted_kl
-from .submission import floor_and_normalize, serialize_submission, validate_prediction_tensor
+from .submission import (
+    SeedSubmissionPlan,
+    build_safe_round_submission,
+    floor_and_normalize,
+    missing_seed_indices,
+    serialize_submission,
+    validate_prediction_tensor,
+)
 
 __all__ = [
     "ArchetypeReport",
@@ -105,6 +112,7 @@ __all__ = [
     "RoundLatentVector",
     "RoundRecord",
     "RoundSeedRecord",
+    "SeedSubmissionPlan",
     "SeedBaselineResult",
     "SeedEvaluation",
     "SeedSpatialResult",
@@ -115,6 +123,7 @@ __all__ = [
     "baseline_prior_for_round",
     "baseline_prior_from_initial_grid",
     "build_archetype_report",
+    "build_safe_round_submission",
     "build_seed_feature_grid",
     "build_seed_spatial_feature_grid",
     "cluster_round_fingerprints",
@@ -129,6 +138,7 @@ __all__ = [
     "load_json",
     "load_leave_one_round_out",
     "load_round_dataset",
+    "missing_seed_indices",
     "parse_analysis_seed",
     "parse_round_detail",
     "parse_round_score",

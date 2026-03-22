@@ -225,6 +225,7 @@ verify all 5 seeds are submitted.
 Since missing a seed gives 0, and zero-probability classes can catastrophically hurt KL, reliability matters almost as much as modeling.
 
 Deliverable: one-button safe submission pipeline.
+Status (2026-03-22): implemented via `scripts/safe_submit_round.py` + round-level safety utilities in `src/astar_island/submission.py`.
 
 13. Evaluate everything with leave-one-round-out ablations
 

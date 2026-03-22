@@ -1,4 +1,4 @@
-# Astar Island Local Tooling (Steps 1-9)
+# Astar Island Local Tooling (Steps 1-12)
 
 This repository includes local Python tooling for the early execution phases from `MASTERPLAN.md`:
 
@@ -13,6 +13,9 @@ This repository includes local Python tooling for the early execution phases fro
 - compute round fingerprints + clustering artifacts for round archetype analysis
 - train with entropy-weighted objective and report epoch-level weighted KL / round score
 - infer a shared round latent from query observations and condition all seed predictions on it
+- run a deterministic three-phase query scheduler for offline/live probing
+- blend empirical observations with model predictions on observed cells
+- run a safe one-button submission pipeline with fallback + validation + completeness checks
 
 ## Setup (`.venv`)
 
@@ -258,6 +261,35 @@ Outputs:
 - `outputs/step11_blending_eval/round_results.csv`
 - `outputs/step11_blending_eval/summary.json`
 - `outputs/step11_blending_eval/run_summary.json`
+
+## Step 12: Safe Submission Pipeline
+
+Run the one-command safe submit pipeline for the active round:
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/safe_submit_round.py \
+  --model latent \
+  --query-budget 50 \
+  --probability-floor 0.01
+```
+
+What it guarantees:
+
+- always constructs valid predictions for every seed index (`0..seeds_count-1`)
+- falls back to mechanics-first priors if model output is missing/invalid
+- applies probability floor and renormalization before submit
+- validates shape and per-cell sums locally before API calls
+- verifies all seeds are submitted via `/my-predictions/{round_id}` and `/my-rounds`
+
+Optional checkpoint mode (auto-resubmit during active round):
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/safe_submit_round.py \
+  --checkpoint-seconds 300 \
+  --max-checkpoints 6
+```
 
 Quick smoke commands:
 
