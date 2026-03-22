@@ -60,6 +60,7 @@ from .query_policy import (
     DeterministicThreePhasePolicyConfig,
     DeterministicThreePhaseQueryPolicy,
 )
+from .reproducibility import build_round_dataset_fingerprint
 from .round_data import (
     LeaveOneRoundOutSplit,
     RoundRecord,
@@ -82,6 +83,12 @@ from .submission import (
     missing_seed_indices,
     serialize_submission,
     validate_prediction_tensor,
+)
+from .world_model import (
+    BaselineBWorldModelPredictor,
+    TrainedBaselineBWorldModel,
+    train_baseline_b_world_model_from_logs,
+    train_baseline_b_world_model_from_rounds,
 )
 
 __all__ = [
@@ -118,11 +125,14 @@ __all__ = [
     "SeedSpatialResult",
     "SeedFingerprint",
     "SpatialSoftmaxModel",
+    "TrainedBaselineBWorldModel",
     "ViewportObservation",
     "ViewportQuery",
+    "BaselineBWorldModelPredictor",
     "baseline_prior_for_round",
     "baseline_prior_from_initial_grid",
     "build_archetype_report",
+    "build_round_dataset_fingerprint",
     "build_safe_round_submission",
     "build_seed_feature_grid",
     "build_seed_spatial_feature_grid",
@@ -150,6 +160,8 @@ __all__ = [
     "serialize_submission",
     "spatial_feature_names",
     "train_multinomial_logistic_regression",
+    "train_baseline_b_world_model_from_logs",
+    "train_baseline_b_world_model_from_rounds",
     "train_spatial_softmax_model",
     "validate_prediction_tensor",
     "weighted_kl",

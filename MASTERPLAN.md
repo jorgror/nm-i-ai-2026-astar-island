@@ -249,6 +249,7 @@ With only 20 rounds, you need disciplined ablations. Otherwise you will end up o
 
 Deliverable: one summary sheet showing what actually moves held-out round score.
 Status (2026-03-22): implemented via `scripts/evaluate_step13_ablations.py` with summary artifacts in `outputs/step13_ablations/`.
+Update (2026-03-22): added rolling anti-overfit selector (`scripts/evaluate_rolling_profile_selection.py`) with artifacts in `outputs/rolling_profile_selection/` to choose stable world/latent/policy production profiles.
 
 14. Only after that, consider a learned world model
 
@@ -262,6 +263,7 @@ query policy learned by imitation or bandit optimization,
 amortized Bayesian inference over round parameters.
 
 But I would only go there after the simpler stack is strong, because with 20 rounds the risk is spending a lot of time building a beautiful model that is less reliable than a careful hybrid baseline.
+Status (2026-03-22): implemented first Step-14 hybrid via Baseline-B world model as latent base predictor (`src/astar_island/world_model.py`), live `latent-b` submission mode (`scripts/safe_submit_round.py`), and LOO evaluator (`scripts/evaluate_step14_world_model.py`). Added targeted holdout evaluator for train<=N/test=M scenarios (`scripts/evaluate_holdout_train_to_test.py`) with documented train1-21/test22 gains in `docs/Step 14 Holdout 22 Findings.md`.
 
 What I would prioritize first
 

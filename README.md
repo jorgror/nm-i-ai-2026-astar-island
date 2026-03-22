@@ -1,4 +1,4 @@
-# Astar Island Local Tooling (Steps 1-13)
+# Astar Island Local Tooling (Steps 1-14)
 
 This repository includes local Python tooling for the early execution phases from `MASTERPLAN.md`:
 
@@ -17,6 +17,7 @@ This repository includes local Python tooling for the early execution phases fro
 - blend empirical observations with model predictions on observed cells
 - run a safe one-button submission pipeline with fallback + validation + completeness checks
 - run leave-one-round-out ablation summaries with dynamic-cell calibration and value/query reporting
+- train and deploy a learned Baseline-B world model as a latent base predictor (Step 14)
 
 ## Setup (`.venv`)
 
@@ -96,6 +97,7 @@ Outputs:
 - `src/astar_island/baseline_c.py`: small spatial baseline (local patch softmax) + LOO evaluation
 - `src/astar_island/round_latent.py`: round-latent encoder + latent-conditioned model + empirical blending (`predict(round_state, seed_initial_state, seed_index)`)
 - `src/astar_island/query_policy.py`: deterministic three-phase query scheduler for offline/live probing
+- `src/astar_island/world_model.py`: Step-14 Baseline-B world model training + predictor wrapper
 
 ## Step 6: Round Archetype Analysis
 
@@ -270,9 +272,9 @@ Run the one-command safe submit pipeline for the active round:
 ```bash
 . .venv/bin/activate
 PYTHONPATH=src python scripts/safe_submit_round.py \
-  --model latent \
+  --model latent-b \
   --query-budget 50 \
-  --probability-floor 0.01
+  --probability-floor 1e-4
 ```
 
 What it guarantees:
@@ -282,6 +284,8 @@ What it guarantees:
 - applies probability floor and renormalization before submit
 - validates shape and per-cell sums locally before API calls
 - verifies all seeds are submitted via `/my-predictions/{round_id}` and `/my-rounds`
+- in `latent-b` mode, trains a Baseline-B world model from historical logs and uses it as the latent base predictor
+- blocks non-production world-model hyperparameter overrides by default (`--allow-experimental-overrides` required for experiments)
 
 Optional checkpoint mode (auto-resubmit during active round):
 
@@ -312,6 +316,70 @@ Outputs:
 - `outputs/step13_ablations/summary.json`
 - `outputs/step13_ablations/step13_summary.md`
 - `outputs/step13_ablations/run_summary.json`
+
+## Step 14: Learned World Model (Baseline-B Latent Base)
+
+Run leave-one-round-out evaluation for the Step-14 upgrade:
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_step14_world_model.py \
+  --logs-root logs \
+  --output-dir outputs/step14_world_model_eval \
+  --query-budget 50 \
+  --strict
+```
+
+Outputs:
+
+- `outputs/step14_world_model_eval/seed_results.csv`
+- `outputs/step14_world_model_eval/round_results.csv`
+- `outputs/step14_world_model_eval/summary.json`
+- `outputs/step14_world_model_eval/run_summary.json`
+
+## Scenario: Train 1-21, Test 22
+
+Run a targeted holdout comparison for the exact scenario:
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_holdout_train_to_test.py \
+  --logs-root logs \
+  --output-dir outputs/holdout_train21_test22 \
+  --train-max-round-number 21 \
+  --test-round-number 22 \
+  --query-budget 50 \
+  --strict
+```
+
+Outputs:
+
+- `outputs/holdout_train21_test22/scenario_summary.csv`
+- `outputs/holdout_train21_test22/seed_scenario_results.csv`
+- `outputs/holdout_train21_test22/summary.json`
+- `outputs/holdout_train21_test22/run_summary.json`
+
+## Scenario: Rolling Profile Selection (Anti-Overfit)
+
+Select a stable production profile using rolling holdouts (`train < k`, `test = k`):
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_rolling_profile_selection.py \
+  --logs-root logs \
+  --output-dir outputs/rolling_profile_selection \
+  --query-budget 50 \
+  --min-test-round-number 12 \
+  --strict
+```
+
+Outputs:
+
+- `outputs/rolling_profile_selection/holdout_results.csv`
+- `outputs/rolling_profile_selection/profile_summary.csv`
+- `outputs/rolling_profile_selection/summary.json`
+- `outputs/rolling_profile_selection/run_summary.json`
+- `outputs/rolling_profile_selection/best_profile.json`
 
 Quick smoke commands:
 

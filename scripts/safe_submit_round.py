@@ -6,21 +6,48 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib import error, request
 
+from astar_island.baseline_b import BaselineBConfig
 from astar_island.offline_emulator import OfflineRoundState, ViewportObservation
 from astar_island.parsing import parse_round_detail
 from astar_island.priors import baseline_prior_from_initial_grid
 from astar_island.query_policy import DeterministicThreePhaseQueryPolicy
 from astar_island.round_latent import RoundLatentConditionalModel, RoundLatentConfig
 from astar_island.submission import build_safe_round_submission, missing_seed_indices
+from astar_island.world_model import (
+    BaselineBWorldModelPredictor,
+    train_baseline_b_world_model_from_logs,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_URL = "https://api.ainm.no"
+PRODUCTION_PROFILE_ID = "rolling_v1_2026_03_22"
+PRODUCTION_WORLD_CFG = BaselineBConfig(
+    learning_rate=0.07,
+    epochs=4,
+    l2=1e-4,
+    samples_per_epoch=20000,
+    max_cells_per_seed=1600,
+    entropy_weight_power=0.8,
+    min_entropy_weight=0.02,
+    probability_floor=1e-4,
+    random_seed=7,
+)
+PRODUCTION_LATENT_CFG = RoundLatentConfig(
+    probability_floor=1e-4,
+    enable_observation_blend=True,
+    empirical_prior_strength=0.55,
+    observation_confidence_scale=2.2,
+    repeated_observation_bonus=0.12,
+    max_observed_blend_weight=0.9,
+    dynamic_blend_boost=0.35,
+)
 
 
 class ApiError(RuntimeError):
@@ -38,14 +65,40 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--round-id", default=None, help="Round id override. Defaults to active round.")
-    parser.add_argument("--model", choices=["latent", "prior"], default="latent")
+    parser.add_argument("--model", choices=["latent", "latent-b", "prior"], default="latent-b")
     parser.add_argument("--query-budget", type=int, default=50, help="Live simulate calls for latent model.")
     parser.add_argument("--disable-blending", action="store_true", help="Disable Step 11 empirical blending.")
-    parser.add_argument("--probability-floor", type=float, default=0.01)
+    parser.add_argument("--probability-floor", type=float, default=1e-4)
     parser.add_argument("--sum-tolerance", type=float, default=0.01)
     parser.add_argument("--submit-retries", type=int, default=3)
     parser.add_argument("--retry-sleep-seconds", type=float, default=0.75)
     parser.add_argument("--simulate-sleep-seconds", type=float, default=0.25)
+    parser.add_argument(
+        "--logs-root",
+        default=str(REPO_ROOT / "logs"),
+        help="Historical logs root used for latent-b world-model training.",
+    )
+    parser.add_argument("--world-learning-rate", type=float, default=PRODUCTION_WORLD_CFG.learning_rate)
+    parser.add_argument("--world-epochs", type=int, default=4)
+    parser.add_argument("--world-l2", type=float, default=1e-4)
+    parser.add_argument("--world-samples-per-epoch", type=int, default=20000)
+    parser.add_argument("--world-max-cells-per-seed", type=int, default=PRODUCTION_WORLD_CFG.max_cells_per_seed)
+    parser.add_argument("--world-entropy-weight-power", type=float, default=0.8)
+    parser.add_argument("--world-min-entropy-weight", type=float, default=0.02)
+    parser.add_argument("--world-random-seed", type=int, default=7)
+    parser.add_argument(
+        "--world-strict",
+        action="store_true",
+        help="Require all historical rounds/seeds to be complete when training latent-b world model.",
+    )
+    parser.add_argument(
+        "--allow-experimental-overrides",
+        action="store_true",
+        help=(
+            "Allow non-production world-model hyperparameter overrides. "
+            "Use this only for explicit experiments, not competition submissions."
+        ),
+    )
     parser.add_argument(
         "--checkpoint-seconds",
         type=float,
@@ -226,8 +279,14 @@ def build_predictions_by_seed(
     model_name: str,
     probability_floor: float,
     enable_blending: bool,
+    world_model_predictor: BaselineBWorldModelPredictor | None = None,
 ) -> dict[int, list[list[list[float]]] | None]:
     predictions: dict[int, list[list[list[float]]] | None] = {}
+    latent_cfg = replace(
+        PRODUCTION_LATENT_CFG,
+        probability_floor=probability_floor,
+        enable_observation_blend=enable_blending,
+    )
     if model_name == "prior":
         for seed_index in range(round_state.seeds_count):
             initial_state = round_state.initial_states[seed_index]
@@ -240,12 +299,15 @@ def build_predictions_by_seed(
             )
         return predictions
 
-    model = RoundLatentConditionalModel(
-        config=RoundLatentConfig(
-            probability_floor=probability_floor,
-            enable_observation_blend=enable_blending,
+    if model_name == "latent-b":
+        if world_model_predictor is None:
+            raise ValueError("latent-b model requested but world_model_predictor was not provided.")
+        model = RoundLatentConditionalModel(
+            config=latent_cfg,
+            base_predictor=world_model_predictor,
         )
-    )
+    else:
+        model = RoundLatentConditionalModel(config=latent_cfg)
     for seed_index in range(round_state.seeds_count):
         initial_state = round_state.initial_states[seed_index]
         try:
@@ -364,9 +426,104 @@ def parse_iso8601(value: object) -> datetime | None:
         return None
 
 
+def world_override_diffs(args: argparse.Namespace) -> dict[str, tuple[float | int, float | int]]:
+    values = {
+        "learning_rate": float(args.world_learning_rate),
+        "epochs": int(args.world_epochs),
+        "l2": float(args.world_l2),
+        "samples_per_epoch": int(args.world_samples_per_epoch),
+        "max_cells_per_seed": int(args.world_max_cells_per_seed),
+        "entropy_weight_power": float(args.world_entropy_weight_power),
+        "min_entropy_weight": float(args.world_min_entropy_weight),
+        "random_seed": int(args.world_random_seed),
+    }
+    production = {
+        "learning_rate": PRODUCTION_WORLD_CFG.learning_rate,
+        "epochs": PRODUCTION_WORLD_CFG.epochs,
+        "l2": PRODUCTION_WORLD_CFG.l2,
+        "samples_per_epoch": PRODUCTION_WORLD_CFG.samples_per_epoch,
+        "max_cells_per_seed": PRODUCTION_WORLD_CFG.max_cells_per_seed,
+        "entropy_weight_power": PRODUCTION_WORLD_CFG.entropy_weight_power,
+        "min_entropy_weight": PRODUCTION_WORLD_CFG.min_entropy_weight,
+        "random_seed": PRODUCTION_WORLD_CFG.random_seed,
+    }
+    diffs: dict[str, tuple[float | int, float | int]] = {}
+    for key, value in values.items():
+        prod_value = production[key]
+        if value != prod_value:
+            diffs[key] = (value, prod_value)
+    return diffs
+
+
 def main() -> int:
     args = parse_args()
     headers = build_headers(args)
+    world_model_predictor: BaselineBWorldModelPredictor | None = None
+    world_model_info: dict[str, Any] | None = None
+    effective_model = str(args.model)
+
+    if effective_model == "latent-b":
+        override_diffs = world_override_diffs(args)
+        if override_diffs and not bool(args.allow_experimental_overrides):
+            diff_text = ", ".join(
+                f"{key}={current} (production={production})"
+                for key, (current, production) in sorted(override_diffs.items())
+            )
+            print(
+                "Refusing non-production world-model overrides for safe submission. "
+                "Use --allow-experimental-overrides only for explicit experiments. "
+                f"diffs: {diff_text}",
+                file=sys.stderr,
+            )
+            return 2
+
+        world_cfg = BaselineBConfig(
+            learning_rate=float(args.world_learning_rate),
+            epochs=int(args.world_epochs),
+            l2=float(args.world_l2),
+            samples_per_epoch=int(args.world_samples_per_epoch),
+            max_cells_per_seed=int(args.world_max_cells_per_seed),
+            entropy_weight_power=float(args.world_entropy_weight_power),
+            min_entropy_weight=float(args.world_min_entropy_weight),
+            probability_floor=float(args.probability_floor),
+            random_seed=int(args.world_random_seed),
+        )
+        try:
+            trained_world = train_baseline_b_world_model_from_logs(
+                logs_root=args.logs_root,
+                config=world_cfg,
+                strict=bool(args.world_strict),
+            )
+            world_model_predictor = BaselineBWorldModelPredictor(
+                model=trained_world.model,
+                probability_floor=trained_world.config.probability_floor,
+            )
+            world_model_info = {
+                "rounds_used": trained_world.rounds_used,
+                "samples_used": trained_world.samples_used,
+                "config": {
+                    "learning_rate": trained_world.config.learning_rate,
+                    "epochs": trained_world.config.epochs,
+                    "l2": trained_world.config.l2,
+                    "samples_per_epoch": trained_world.config.samples_per_epoch,
+                    "max_cells_per_seed": trained_world.config.max_cells_per_seed,
+                    "entropy_weight_power": trained_world.config.entropy_weight_power,
+                    "min_entropy_weight": trained_world.config.min_entropy_weight,
+                    "probability_floor": trained_world.config.probability_floor,
+                    "random_seed": trained_world.config.random_seed,
+                },
+            }
+            print(
+                "latent-b world model trained "
+                f"(rounds={trained_world.rounds_used}, samples={trained_world.samples_used})"
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "Failed to train latent-b world model; falling back to latent model. "
+                f"reason={exc}",
+                file=sys.stderr,
+            )
+            effective_model = "latent"
 
     try:
         round_id = select_round_id(
@@ -396,10 +553,10 @@ def main() -> int:
                 map_height=detail.map_height,
                 seeds_count=detail.seeds_count,
                 initial_states=detail.initial_states,
-                query_budget=args.query_budget if args.model == "latent" else 0,
+                query_budget=args.query_budget if effective_model in {"latent", "latent-b"} else 0,
             )
 
-            if args.model == "latent":
+            if effective_model in {"latent", "latent-b"}:
                 run_live_queries(
                     round_state=state,
                     headers=headers,
@@ -409,9 +566,10 @@ def main() -> int:
 
             predictions_by_seed = build_predictions_by_seed(
                 round_state=state,
-                model_name=args.model,
+                model_name=effective_model,
                 probability_floor=float(args.probability_floor),
                 enable_blending=not bool(args.disable_blending),
+                world_model_predictor=world_model_predictor,
             )
             plans = build_safe_round_submission(
                 round_id=detail.round_id,
@@ -471,7 +629,11 @@ def main() -> int:
                 "generated_at": datetime.now(tz=timezone.utc).isoformat(),
                 "round_id": detail.round_id,
                 "round_status": detail.status,
-                "model": args.model,
+                "requested_model": args.model,
+                "effective_model": effective_model,
+                "production_profile_id": PRODUCTION_PROFILE_ID,
+                "world_model_info": world_model_info,
+                "experimental_overrides_enabled": bool(args.allow_experimental_overrides),
                 "queries_used": state.queries_used,
                 "queries_max": state.queries_max,
                 "probability_floor": float(args.probability_floor),
