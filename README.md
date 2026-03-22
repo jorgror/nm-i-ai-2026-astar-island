@@ -1,4 +1,4 @@
-# Astar Island Local Tooling (Steps 1-12)
+# Astar Island Local Tooling (Steps 1-13)
 
 This repository includes local Python tooling for the early execution phases from `MASTERPLAN.md`:
 
@@ -16,6 +16,7 @@ This repository includes local Python tooling for the early execution phases fro
 - run a deterministic three-phase query scheduler for offline/live probing
 - blend empirical observations with model predictions on observed cells
 - run a safe one-button submission pipeline with fallback + validation + completeness checks
+- run leave-one-round-out ablation summaries with dynamic-cell calibration and value/query reporting
 
 ## Setup (`.venv`)
 
@@ -290,6 +291,27 @@ PYTHONPATH=src python scripts/safe_submit_round.py \
   --checkpoint-seconds 300 \
   --max-checkpoints 6
 ```
+
+## Step 13: Ablation Summary Sheet
+
+Run the consolidated ablation pass:
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_step13_ablations.py \
+  --logs-root logs \
+  --output-dir outputs/step13_ablations \
+  --query-budget 50 \
+  --strict
+```
+
+Outputs:
+
+- `outputs/step13_ablations/round_scenario_results.csv`
+- `outputs/step13_ablations/scenario_summary.csv`
+- `outputs/step13_ablations/summary.json`
+- `outputs/step13_ablations/step13_summary.md`
+- `outputs/step13_ablations/run_summary.json`
 
 Quick smoke commands:
 

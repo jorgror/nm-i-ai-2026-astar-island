@@ -248,6 +248,7 @@ value per query.
 With only 20 rounds, you need disciplined ablations. Otherwise you will end up optimizing noise.
 
 Deliverable: one summary sheet showing what actually moves held-out round score.
+Status (2026-03-22): implemented via `scripts/evaluate_step13_ablations.py` with summary artifacts in `outputs/step13_ablations/`.
 
 14. Only after that, consider a learned world model
 
