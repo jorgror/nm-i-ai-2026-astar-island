@@ -1,4 +1,4 @@
-# Astar Island Local Tooling (Steps 1-8)
+# Astar Island Local Tooling (Steps 1-9)
 
 This repository includes local Python tooling for the early execution phases from `MASTERPLAN.md`:
 
@@ -12,6 +12,7 @@ This repository includes local Python tooling for the early execution phases fro
 - generate mechanics-first priors and dynamic-cell importance maps
 - compute round fingerprints + clustering artifacts for round archetype analysis
 - train with entropy-weighted objective and report epoch-level weighted KL / round score
+- infer a shared round latent from query observations and condition all seed predictions on it
 
 ## Setup (`.venv`)
 
@@ -89,6 +90,7 @@ Outputs:
 - `src/astar_island/archetypes.py`: round fingerprint extraction, k-means clustering, PCA scatter + elbow plots
 - `src/astar_island/baseline_b.py`: feature-based non-neural baseline (multinomial logistic regression) + LOO evaluation
 - `src/astar_island/baseline_c.py`: small spatial baseline (local patch softmax) + LOO evaluation
+- `src/astar_island/round_latent.py`: round-latent encoder + latent-conditioned model (`predict(round_state, seed_initial_state, seed_index)`)
 
 ## Step 6: Round Archetype Analysis
 
@@ -194,6 +196,26 @@ Current default settings are tuned from the step-8 sweep:
 
 - Baseline B defaults: `b4` (`lr=0.06`, `epochs=4`, `samples_per_epoch=20000`, `entropy_weight_power=0.8`)
 - Baseline C defaults: `c1` (`patch_radius=1`, `lr=0.04`, `epochs=3`, `samples_per_epoch=12000`)
+
+## Step 9: Round-Latent Evaluation
+
+Run step-9 evaluation (no-query prior vs queried prior vs queried latent):
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_round_latent.py \
+  --logs-root logs \
+  --output-dir outputs/step9_round_latent_eval \
+  --query-budget 50 \
+  --strict
+```
+
+Outputs:
+
+- `outputs/step9_round_latent_eval/seed_results.csv`
+- `outputs/step9_round_latent_eval/round_results.csv`
+- `outputs/step9_round_latent_eval/summary.json`
+- `outputs/step9_round_latent_eval/run_summary.json`
 
 Quick smoke commands:
 

@@ -64,6 +64,12 @@ from .round_data import (
     load_leave_one_round_out,
     load_round_dataset,
 )
+from .round_latent import (
+    RoundLatentConditionalModel,
+    RoundLatentConfig,
+    RoundLatentEncoder,
+    RoundLatentVector,
+)
 from .scoring import score_round, score_seed, weighted_kl
 from .submission import floor_and_normalize, serialize_submission, validate_prediction_tensor
 
@@ -87,6 +93,10 @@ __all__ = [
     "RoundBaselineResult",
     "RoundSpatialResult",
     "RoundFingerprint",
+    "RoundLatentConditionalModel",
+    "RoundLatentConfig",
+    "RoundLatentEncoder",
+    "RoundLatentVector",
     "RoundRecord",
     "RoundSeedRecord",
     "SeedBaselineResult",
