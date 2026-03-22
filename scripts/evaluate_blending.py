@@ -20,6 +20,7 @@ from astar_island.query_policy import (
     DeterministicThreePhasePolicyConfig,
     DeterministicThreePhaseQueryPolicy,
 )
+from astar_island.reproducibility import build_round_dataset_fingerprint
 from astar_island.round_data import load_round_dataset
 from astar_island.round_latent import RoundLatentConditionalModel, RoundLatentConfig
 
@@ -87,6 +88,10 @@ def main() -> int:
             row.round_id,
         ),
     )
+    dataset_fingerprint = build_round_dataset_fingerprint(
+        rounds=rounds_sorted,
+        logs_root=args.logs_root,
+    )
 
     seed_rows: list[SeedBlendRow] = []
     round_rows: list[RoundBlendRow] = []
@@ -99,6 +104,7 @@ def main() -> int:
                 config=RoundLatentConfig(enable_observation_blend=False)
             ),
             round_id=record.round_id,
+            round_record=record,
             logs_root=args.logs_root,
             query_budget=args.query_budget,
             include_replays=True,
@@ -113,6 +119,7 @@ def main() -> int:
                 config=RoundLatentConfig(enable_observation_blend=True)
             ),
             round_id=record.round_id,
+            round_record=record,
             logs_root=args.logs_root,
             query_budget=args.query_budget,
             include_replays=True,
@@ -158,12 +165,14 @@ def main() -> int:
     _write_csv(seed_csv, seed_rows)
     _write_csv(round_csv, round_rows)
     summary = _build_summary(seed_rows=seed_rows, round_rows=round_rows)
+    summary["dataset_fingerprint"] = dataset_fingerprint
     summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     run_summary = {
         "rounds_evaluated": len(round_rows),
         "seeds_evaluated": len(seed_rows),
         "query_budget": args.query_budget,
+        "dataset_fingerprint": dataset_fingerprint,
         "mean_round_score_no_blend": summary["mean_round_score_no_blend"],
         "mean_round_score_blend": summary["mean_round_score_blend"],
         "mean_round_delta_blend_vs_no_blend": summary["mean_round_delta_blend_vs_no_blend"],

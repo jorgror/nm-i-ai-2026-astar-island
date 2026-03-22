@@ -99,6 +99,35 @@ def _ruin_observation(seed_index: int = 1) -> ViewportObservation:
     )
 
 
+def _settlement_observation(seed_index: int = 1) -> ViewportObservation:
+    grid = [[1 for _ in range(5)] for _ in range(5)]
+    settlements = [
+        {
+            "x": 2,
+            "y": 2,
+            "population": 2.0,
+            "food": 1.5,
+            "wealth": 1.2,
+            "defense": 1.1,
+            "has_port": True,
+            "alive": True,
+        }
+    ]
+    return ViewportObservation(
+        seed_index=seed_index,
+        query_index=1,
+        grid=grid,
+        settlements=settlements,
+        viewport={"x": 0, "y": 0, "w": 5, "h": 5},
+        width=6,
+        height=6,
+        queries_used=1,
+        queries_max=50,
+        available=True,
+        source="unit-test",
+    )
+
+
 def _repeated_ruin_observations(*, seed_index: int, repeats: int) -> list[ViewportObservation]:
     out: list[ViewportObservation] = []
     for idx in range(repeats):
@@ -307,6 +336,24 @@ class TestRoundLatent(unittest.TestCase):
         pred_no_obs = model.predict(no_obs_state, seed0, seed_index=0)
         pred_obs = model.predict(obs_state, seed0, seed_index=0)
         self.assertTrue(math.isclose(pred_no_obs[5][5][3], pred_obs[5][5][3], abs_tol=1e-9))
+
+    def test_latent_cache_key_changes_when_observations_change_with_same_query_count(self) -> None:
+        model = RoundLatentConditionalModel()
+        seed0 = _make_seed_state(width=6, height=6)
+        ruin_state = _make_state(
+            observations=[_ruin_observation(seed_index=1)],
+            queries_used=1,
+        )
+        settlement_state = _make_state(
+            observations=[_settlement_observation(seed_index=1)],
+            queries_used=1,
+        )
+
+        ruin_pred = model.predict(ruin_state, seed0, seed_index=0)
+        settlement_pred = model.predict(settlement_state, seed0, seed_index=0)
+
+        self.assertGreater(ruin_pred[0][0][3], settlement_pred[0][0][3])
+        self.assertGreater(settlement_pred[0][0][1], ruin_pred[0][0][1])
 
 
 if __name__ == "__main__":

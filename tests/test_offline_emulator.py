@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from astar_island.offline_emulator import run_offline_round
+from astar_island.round_data import load_round_dataset
 
 
 NUM_CLASSES = 6
@@ -213,6 +214,42 @@ class TestOfflineEmulator(unittest.TestCase):
             self.assertFalse(obs.available)
             self.assertEqual(obs.grid, [])
             self.assertEqual(obs.source, "missing-replay")
+
+    def test_run_offline_round_accepts_preloaded_round_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs_root = Path(tmp)
+            _make_round(logs_root, "round-preloaded", seeds_count=1, width=6, height=6)
+            record = load_round_dataset(logs_root, include_replays=True, strict=True)[0]
+
+            result = run_offline_round(
+                policy=FixedPolicy([]),
+                model=PerfectModel(width=6, height=6),
+                round_id="round-preloaded",
+                round_record=record,
+                logs_root=str(logs_root / "does-not-matter"),
+                query_budget=0,
+                strict=True,
+            )
+
+            self.assertEqual(result.round_id, "round-preloaded")
+            self.assertEqual(result.round_score, 100.0)
+
+    def test_preloaded_round_record_must_match_round_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs_root = Path(tmp)
+            _make_round(logs_root, "round-preloaded", seeds_count=1, width=6, height=6)
+            record = load_round_dataset(logs_root, include_replays=True, strict=True)[0]
+
+            with self.assertRaises(ValueError):
+                run_offline_round(
+                    policy=FixedPolicy([]),
+                    model=PerfectModel(width=6, height=6),
+                    round_id="other-round",
+                    round_record=record,
+                    logs_root=str(logs_root),
+                    query_budget=0,
+                    strict=True,
+                )
 
 
 if __name__ == "__main__":

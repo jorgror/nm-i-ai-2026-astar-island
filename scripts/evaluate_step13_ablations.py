@@ -23,6 +23,7 @@ from astar_island.query_policy import (
     DeterministicThreePhasePolicyConfig,
     DeterministicThreePhaseQueryPolicy,
 )
+from astar_island.reproducibility import build_round_dataset_fingerprint
 from astar_island.round_data import RoundRecord, load_round_dataset
 from astar_island.round_latent import RoundLatentConditionalModel, RoundLatentConfig
 from astar_island.scoring import cell_entropy
@@ -203,6 +204,10 @@ def main() -> int:
     )
     if not rounds_sorted:
         raise ValueError("No rounds loaded for Step 13 evaluation.")
+    dataset_fingerprint = build_round_dataset_fingerprint(
+        rounds=rounds_sorted,
+        logs_root=args.logs_root,
+    )
 
     scenarios = [
         ScenarioConfig(
@@ -283,6 +288,7 @@ def main() -> int:
     summary = {
         "query_budget": int(args.query_budget),
         "rounds_evaluated": len(rounds_sorted),
+        "dataset_fingerprint": dataset_fingerprint,
         "scenarios": [asdict(row) for row in scenario_summary_rows],
         "comparisons": comparisons,
         "feature_vs_cnn": feature_vs_cnn,
@@ -299,6 +305,7 @@ def main() -> int:
         _render_markdown_summary(
             rounds_evaluated=len(rounds_sorted),
             query_budget=int(args.query_budget),
+            dataset_fingerprint=dataset_fingerprint,
             scenario_rows=scenario_summary_rows,
             comparisons=comparisons,
             feature_vs_cnn=feature_vs_cnn,
@@ -310,6 +317,7 @@ def main() -> int:
         "rounds_evaluated": len(rounds_sorted),
         "scenario_count": len(scenario_summary_rows),
         "query_budget": int(args.query_budget),
+        "dataset_fingerprint": dataset_fingerprint,
         "mean_round_score_no_query_prior": _scenario_metric(
             scenario_summary_rows,
             "no_query_prior",
@@ -368,6 +376,7 @@ def _evaluate_scenario(
             policy=scenario.policy_factory(scenario.query_budget),
             model=model,
             round_id=record.round_id,
+            round_record=record,
             logs_root=logs_root,
             query_budget=scenario.query_budget,
             include_replays=True,
@@ -587,6 +596,7 @@ def _render_markdown_summary(
     *,
     rounds_evaluated: int,
     query_budget: int,
+    dataset_fingerprint: dict[str, object],
     scenario_rows: list[ScenarioSummaryRow],
     comparisons: dict[str, float | None],
     feature_vs_cnn: dict[str, float | None],
@@ -596,6 +606,7 @@ def _render_markdown_summary(
         "",
         f"- Rounds evaluated: {rounds_evaluated}",
         f"- Query budget (query-based scenarios): {query_budget}",
+        f"- Dataset fingerprint (sha256): `{dataset_fingerprint.get('sha256')}`",
         "",
         "## Scenario Metrics",
         "",

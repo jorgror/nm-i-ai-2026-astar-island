@@ -21,6 +21,7 @@ from astar_island.query_policy import (
     DeterministicThreePhasePolicyConfig,
     DeterministicThreePhaseQueryPolicy,
 )
+from astar_island.reproducibility import build_round_dataset_fingerprint
 from astar_island.round_data import load_round_dataset
 from astar_island.round_latent import RoundLatentConditionalModel, RoundLatentConfig
 
@@ -118,6 +119,10 @@ def main() -> int:
             row.round_id,
         ),
     )
+    dataset_fingerprint = build_round_dataset_fingerprint(
+        rounds=rounds_sorted,
+        logs_root=logs_root,
+    )
 
     seed_rows: list[SeedEvalRow] = []
     round_rows: list[RoundEvalRow] = []
@@ -127,6 +132,7 @@ def main() -> int:
             policy=NoQueryPolicy(),
             model=PriorOnlyModel(),
             round_id=record.round_id,
+            round_record=record,
             logs_root=str(logs_root),
             query_budget=0,
             include_replays=True,
@@ -140,6 +146,7 @@ def main() -> int:
             ),
             model=PriorOnlyModel(),
             round_id=record.round_id,
+            round_record=record,
             logs_root=str(logs_root),
             query_budget=args.query_budget,
             include_replays=True,
@@ -155,6 +162,7 @@ def main() -> int:
                 config=RoundLatentConfig(enable_observation_blend=False)
             ),
             round_id=record.round_id,
+            round_record=record,
             logs_root=str(logs_root),
             query_budget=args.query_budget,
             include_replays=True,
@@ -211,12 +219,14 @@ def main() -> int:
     _write_csv(seed_csv, seed_rows)
     _write_csv(round_csv, round_rows)
     summary = _build_summary(seed_rows, round_rows, query_budget=args.query_budget)
+    summary["dataset_fingerprint"] = dataset_fingerprint
     summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     run_summary = {
         "rounds_evaluated": len(round_rows),
         "seeds_evaluated": len(seed_rows),
         "query_budget": args.query_budget,
+        "dataset_fingerprint": dataset_fingerprint,
         "mean_round_score_no_query_prior": summary["mean_round_score_no_query_prior"],
         "mean_round_score_query_prior": summary["mean_round_score_query_prior"],
         "mean_round_score_query_latent": summary["mean_round_score_query_latent"],

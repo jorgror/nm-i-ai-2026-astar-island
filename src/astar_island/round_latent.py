@@ -250,14 +250,16 @@ class RoundLatentConditionalModel:
         self.config = cfg
         self.encoder = encoder or RoundLatentEncoder(config=cfg)
         self.base_predictor = base_predictor or _default_seed_prior_predictor
-        self._cached_latent_key: tuple[str, int, int] | None = None
+        self._cached_latent_key: tuple[str, int, int, int] | None = None
         self._cached_latent: RoundLatentVector | None = None
 
     def infer_latent(self, round_state: OfflineRoundState) -> RoundLatentVector:
+        observations_signature = _observations_signature(round_state)
         key = (
             str(round_state.round_id),
             int(round_state.queries_used),
             len(round_state.observations),
+            observations_signature,
         )
         if self._cached_latent_key == key and self._cached_latent is not None:
             return self._cached_latent
@@ -587,3 +589,45 @@ def _clamp01(value: float) -> float:
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return min(max(value, lo), hi)
+
+
+def _observations_signature(round_state: OfflineRoundState) -> int:
+    """Compute a lightweight deterministic signature for latent-cache invalidation."""
+    acc = 1469598103934665603  # FNV offset basis.
+    for obs in round_state.observations:
+        acc = _fnv_mix(acc, int(obs.seed_index))
+        acc = _fnv_mix(acc, int(obs.query_index))
+        viewport = obs.viewport or {}
+        acc = _fnv_mix(acc, int(viewport.get("x", 0)))
+        acc = _fnv_mix(acc, int(viewport.get("y", 0)))
+        acc = _fnv_mix(acc, int(viewport.get("w", 0)))
+        acc = _fnv_mix(acc, int(viewport.get("h", 0)))
+        acc = _fnv_mix(acc, 1 if obs.available else 0)
+        acc = _fnv_mix(acc, len(obs.grid))
+        for row in obs.grid:
+            if not isinstance(row, list):
+                continue
+            acc = _fnv_mix(acc, len(row))
+            for value in row:
+                try:
+                    terrain = int(value)
+                except (TypeError, ValueError):
+                    terrain = 0
+                acc = _fnv_mix(acc, terrain)
+        acc = _fnv_mix(acc, len(obs.settlements))
+        for settlement in obs.settlements:
+            if not isinstance(settlement, dict):
+                continue
+            acc = _fnv_mix(acc, int(bool(settlement.get("alive", True))))
+            acc = _fnv_mix(acc, int(bool(settlement.get("has_port", False))))
+            for key in ("x", "y", "owner_id"):
+                try:
+                    acc = _fnv_mix(acc, int(settlement.get(key, 0)))
+                except (TypeError, ValueError):
+                    acc = _fnv_mix(acc, 0)
+    return acc
+
+
+def _fnv_mix(current: int, value: int) -> int:
+    mixed = current ^ (int(value) & 0xFFFFFFFFFFFFFFFF)
+    return (mixed * 1099511628211) & 0xFFFFFFFFFFFFFFFF

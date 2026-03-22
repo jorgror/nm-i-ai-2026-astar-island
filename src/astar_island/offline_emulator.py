@@ -91,22 +91,29 @@ def run_offline_round(
     strict: bool = True,
     allow_missing_replays: bool = True,
     probability_floor: float | None = None,
+    round_record: RoundRecord | None = None,
 ) -> OfflineRoundResult:
     """Run a local offline emulation of a historical round."""
-    round_record = _load_round_by_id(
-        round_id=round_id,
-        logs_root=logs_root,
-        include_replays=include_replays,
-        strict=strict,
-    )
+    resolved_round = round_record
+    if resolved_round is None:
+        resolved_round = _load_round_by_id(
+            round_id=round_id,
+            logs_root=logs_root,
+            include_replays=include_replays,
+            strict=strict,
+        )
+    elif str(resolved_round.round_id) != str(round_id):
+        raise ValueError(
+            f"round_record round_id mismatch: expected {round_id}, got {resolved_round.round_id}"
+        )
 
     state = OfflineRoundState(
-        round_id=round_record.round_id,
-        map_width=round_record.map_width,
-        map_height=round_record.map_height,
-        seeds_count=round_record.seeds_count,
-        initial_states=[seed.initial_state for seed in round_record.seeds],
-        replay_available=[seed.replay is not None for seed in round_record.seeds],
+        round_id=resolved_round.round_id,
+        map_width=resolved_round.map_width,
+        map_height=resolved_round.map_height,
+        seeds_count=resolved_round.seeds_count,
+        initial_states=[seed.initial_state for seed in resolved_round.seeds],
+        replay_available=[seed.replay is not None for seed in resolved_round.seeds],
         queries_max=query_budget,
         queries_used=0,
         observations=[],
@@ -117,7 +124,7 @@ def run_offline_round(
         if query is None:
             break
         obs = _simulate_viewport_query(
-            round_record=round_record,
+            round_record=resolved_round,
             query=query,
             query_index=state.queries_used + 1,
             queries_max=query_budget,
@@ -127,11 +134,11 @@ def run_offline_round(
         state.observations.append(obs)
 
     per_seed: list[SeedEvaluation] = []
-    for seed_record in round_record.seeds:
+    for seed_record in resolved_round.seeds:
         if seed_record.analysis is None:
             if strict:
                 raise ValueError(
-                    f"Missing analysis for round={round_record.round_id} "
+                    f"Missing analysis for round={resolved_round.round_id} "
                     f"seed={seed_record.seed_index}"
                 )
             per_seed.append(
@@ -154,13 +161,13 @@ def run_offline_round(
 
         validation = validate_prediction_tensor(
             prediction,
-            expected_width=round_record.map_width,
-            expected_height=round_record.map_height,
+            expected_width=resolved_round.map_width,
+            expected_height=resolved_round.map_height,
         )
         if not validation.ok:
             first_err = validation.errors[0] if validation.errors else "unknown validation error"
             raise ValueError(
-                f"Invalid prediction for round={round_record.round_id} seed={seed_record.seed_index}: "
+                f"Invalid prediction for round={resolved_round.round_id} seed={seed_record.seed_index}: "
                 f"{first_err}"
             )
 
@@ -173,9 +180,9 @@ def run_offline_round(
             )
         )
 
-    round_score = score_round([seed.score for seed in per_seed], expected_seeds=round_record.seeds_count)
+    round_score = score_round([seed.score for seed in per_seed], expected_seeds=resolved_round.seeds_count)
     return OfflineRoundResult(
-        round_id=round_record.round_id,
+        round_id=resolved_round.round_id,
         queries_used=state.queries_used,
         queries_max=query_budget,
         per_seed=per_seed,

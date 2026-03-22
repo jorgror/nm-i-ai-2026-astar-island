@@ -21,6 +21,7 @@ from astar_island.query_policy import (
     DeterministicThreePhasePolicyConfig,
     DeterministicThreePhaseQueryPolicy,
 )
+from astar_island.reproducibility import build_round_dataset_fingerprint
 from astar_island.round_data import load_round_dataset
 from astar_island.round_latent import RoundLatentConditionalModel
 
@@ -136,6 +137,10 @@ def main() -> int:
             row.round_id,
         ),
     )
+    dataset_fingerprint = build_round_dataset_fingerprint(
+        rounds=rounds_sorted,
+        logs_root=args.logs_root,
+    )
 
     model = RoundLatentConditionalModel() if args.model == "latent" else PriorOnlyModel()
     round_rows: list[RoundPolicyRow] = []
@@ -148,6 +153,7 @@ def main() -> int:
             ),
             model=model,
             round_id=record.round_id,
+            round_record=record,
             logs_root=args.logs_root,
             query_budget=args.query_budget,
             include_replays=True,
@@ -158,6 +164,7 @@ def main() -> int:
             policy=CenterSweepPolicy(query_budget=args.query_budget),
             model=model,
             round_id=record.round_id,
+            round_record=record,
             logs_root=args.logs_root,
             query_budget=args.query_budget,
             include_replays=True,
@@ -203,6 +210,7 @@ def main() -> int:
     _write_csv(seed_csv, seed_rows)
     _write_csv(round_csv, round_rows)
     summary = _build_summary(round_rows=round_rows, seed_rows=seed_rows, model=args.model)
+    summary["dataset_fingerprint"] = dataset_fingerprint
     summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     run_summary = {
@@ -210,6 +218,7 @@ def main() -> int:
         "rounds_evaluated": len(round_rows),
         "seeds_evaluated": len(seed_rows),
         "query_budget": args.query_budget,
+        "dataset_fingerprint": dataset_fingerprint,
         "mean_round_score_three_phase": summary["mean_round_score_three_phase"],
         "mean_round_score_center": summary["mean_round_score_center"],
         "mean_round_delta_three_phase_vs_center": summary["mean_round_delta_three_phase_vs_center"],
