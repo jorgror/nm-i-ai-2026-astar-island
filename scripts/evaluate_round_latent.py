@@ -22,7 +22,7 @@ from astar_island.query_policy import (
     DeterministicThreePhaseQueryPolicy,
 )
 from astar_island.round_data import load_round_dataset
-from astar_island.round_latent import RoundLatentConditionalModel
+from astar_island.round_latent import RoundLatentConditionalModel, RoundLatentConfig
 
 
 @dataclass(slots=True)
@@ -151,7 +151,9 @@ def main() -> int:
             policy=DeterministicThreePhaseQueryPolicy(
                 config=DeterministicThreePhasePolicyConfig(query_budget=args.query_budget)
             ),
-            model=RoundLatentConditionalModel(),
+            model=RoundLatentConditionalModel(
+                config=RoundLatentConfig(enable_observation_blend=False)
+            ),
             round_id=record.round_id,
             logs_root=str(logs_root),
             query_budget=args.query_budget,

@@ -41,6 +41,17 @@ class RoundLatentConfig:
     static_cell_dampen: float = 0.35
     preserve_mountains: bool = True
 
+    enable_observation_blend: bool = True
+    empirical_prior_strength: float = 0.4
+    empirical_neighbor_smoothing: float = 0.2
+    observation_confidence_scale: float = 1.8
+    repeated_observation_bonus: float = 0.2
+    repeated_observation_saturation: int = 3
+    min_observed_blend_weight: float = 0.05
+    max_observed_blend_weight: float = 0.92
+    dynamic_blend_boost: float = 0.45
+    static_blend_dampen: float = 0.65
+
 
 @dataclass(slots=True)
 class RoundLatentVector:
@@ -304,7 +315,15 @@ class RoundLatentConditionalModel:
                 )
             adjusted.append(out_row)
 
-        return floor_and_normalize(adjusted, floor=self.config.probability_floor)
+        blended = _blend_with_observations(
+            prediction=adjusted,
+            round_state=round_state,
+            seed_index=seed_index,
+            initial_grid=seed_initial_state.grid,
+            importance=importance,
+            config=self.config,
+        )
+        return floor_and_normalize(blended, floor=self.config.probability_floor)
 
 
 def _default_seed_prior_predictor(seed_initial_state: SeedInitialState, _: int) -> Tensor3D:
@@ -312,6 +331,210 @@ def _default_seed_prior_predictor(seed_initial_state: SeedInitialState, _: int) 
         seed_initial_state.grid,
         settlements=seed_initial_state.settlements,
     )
+
+
+def _blend_with_observations(
+    *,
+    prediction: Tensor3D,
+    round_state: OfflineRoundState,
+    seed_index: int,
+    initial_grid: list[list[int]],
+    importance: list[list[float]],
+    config: RoundLatentConfig,
+) -> Tensor3D:
+    if not config.enable_observation_blend:
+        return prediction
+
+    height = len(prediction)
+    width = len(prediction[0]) if height > 0 else 0
+    if width <= 0 or height <= 0:
+        return prediction
+
+    counts, totals = _observation_counts_for_seed(
+        round_state=round_state,
+        seed_index=seed_index,
+        width=width,
+        height=height,
+    )
+    if not any(total > 0 for row in totals for total in row):
+        return prediction
+
+    empirical = _empirical_posteriors_from_counts(
+        counts=counts,
+        totals=totals,
+        prediction=prediction,
+        prior_strength=config.empirical_prior_strength,
+    )
+    neighbor_empirical = _neighbor_empirical_posteriors(
+        empirical=empirical,
+        totals=totals,
+    )
+
+    out: Tensor3D = []
+    for y in range(height):
+        out_row: list[list[float]] = []
+        for x in range(width):
+            base_cell = prediction[y][x]
+            samples = totals[y][x]
+            if samples <= 0:
+                out_row.append(list(base_cell))
+                continue
+
+            empirical_cell = empirical[y][x]
+            if empirical_cell is None:
+                out_row.append(list(base_cell))
+                continue
+
+            neighbor = neighbor_empirical[y][x]
+            if (
+                neighbor is not None
+                and config.empirical_neighbor_smoothing > 0.0
+            ):
+                empirical_cell = _normalize_probs(
+                    [
+                        (1.0 - config.empirical_neighbor_smoothing) * empirical_cell[idx]
+                        + config.empirical_neighbor_smoothing * neighbor[idx]
+                        for idx in range(NUM_CLASSES)
+                    ],
+                    epsilon=config.epsilon,
+                )
+
+            weight = _blend_weight(
+                samples=samples,
+                terrain=int(initial_grid[y][x]),
+                dynamic_importance=float(importance[y][x]),
+                config=config,
+            )
+            out_row.append(
+                _normalize_probs(
+                    [
+                        (1.0 - weight) * base_cell[idx] + weight * empirical_cell[idx]
+                        for idx in range(NUM_CLASSES)
+                    ],
+                    epsilon=config.epsilon,
+                )
+            )
+        out.append(out_row)
+    return out
+
+
+def _observation_counts_for_seed(
+    *,
+    round_state: OfflineRoundState,
+    seed_index: int,
+    width: int,
+    height: int,
+) -> tuple[list[list[list[int]]], list[list[int]]]:
+    counts = [
+        [[0 for _ in range(NUM_CLASSES)] for _ in range(width)]
+        for _ in range(height)
+    ]
+    totals = [[0 for _ in range(width)] for _ in range(height)]
+
+    for obs in round_state.observations:
+        if obs.seed_index != seed_index or not obs.available or not obs.grid:
+            continue
+        vx = int(obs.viewport.get("x", 0))
+        vy = int(obs.viewport.get("y", 0))
+        for local_y, row in enumerate(obs.grid):
+            gy = vy + local_y
+            if gy < 0 or gy >= height:
+                continue
+            for local_x, terrain in enumerate(row):
+                gx = vx + local_x
+                if gx < 0 or gx >= width:
+                    continue
+                cls = GRID_TO_CLASS.get(int(terrain), 0)
+                counts[gy][gx][cls] += 1
+                totals[gy][gx] += 1
+    return counts, totals
+
+
+def _empirical_posteriors_from_counts(
+    *,
+    counts: list[list[list[int]]],
+    totals: list[list[int]],
+    prediction: Tensor3D,
+    prior_strength: float,
+) -> list[list[list[float] | None]]:
+    height = len(totals)
+    width = len(totals[0]) if height > 0 else 0
+    out: list[list[list[float] | None]] = []
+    for y in range(height):
+        out_row: list[list[float] | None] = []
+        for x in range(width):
+            sample_count = totals[y][x]
+            if sample_count <= 0:
+                out_row.append(None)
+                continue
+            denom = float(sample_count) + max(0.0, prior_strength)
+            probs: list[float] = []
+            for cls in range(NUM_CLASSES):
+                numerator = float(counts[y][x][cls]) + max(0.0, prior_strength) * prediction[y][x][cls]
+                probs.append(numerator / denom if denom > 0.0 else prediction[y][x][cls])
+            out_row.append(_normalize_probs(probs, epsilon=1e-12))
+        out.append(out_row)
+    return out
+
+
+def _neighbor_empirical_posteriors(
+    *,
+    empirical: list[list[list[float] | None]],
+    totals: list[list[int]],
+) -> list[list[list[float] | None]]:
+    height = len(empirical)
+    width = len(empirical[0]) if height > 0 else 0
+    out: list[list[list[float] | None]] = []
+    for y in range(height):
+        out_row: list[list[float] | None] = []
+        for x in range(width):
+            acc = [0.0 for _ in range(NUM_CLASSES)]
+            weight_sum = 0.0
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx = x + dx
+                    ny = y + dy
+                    if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                        continue
+                    neighbor_empirical = empirical[ny][nx]
+                    if neighbor_empirical is None:
+                        continue
+                    neighbor_weight = float(totals[ny][nx])
+                    if neighbor_weight <= 0.0:
+                        continue
+                    for cls in range(NUM_CLASSES):
+                        acc[cls] += neighbor_weight * neighbor_empirical[cls]
+                    weight_sum += neighbor_weight
+            if weight_sum <= 0.0:
+                out_row.append(None)
+            else:
+                out_row.append([value / weight_sum for value in acc])
+        out.append(out_row)
+    return out
+
+
+def _blend_weight(
+    *,
+    samples: int,
+    terrain: int,
+    dynamic_importance: float,
+    config: RoundLatentConfig,
+) -> float:
+    base = float(samples) / (float(samples) + max(config.observation_confidence_scale, 1e-6))
+    repeats = max(0, samples - 1)
+    repeat_fraction = repeats / float(max(1, config.repeated_observation_saturation))
+    repeat_fraction = _clamp01(repeat_fraction)
+    base += config.repeated_observation_bonus * repeat_fraction
+
+    dynamic_scale = 1.0 + (config.dynamic_blend_boost * _clamp01(dynamic_importance))
+    weight = base * dynamic_scale
+    if terrain in (0, 4, 5, 10, 11):
+        weight *= config.static_blend_dampen
+
+    weight = max(config.min_observed_blend_weight, weight)
+    return _clamp(weight, 0.0, config.max_observed_blend_weight)
 
 
 def _apply_logit_offsets(
@@ -338,6 +561,14 @@ def _uniform_tensor(*, width: int, height: int) -> Tensor3D:
     cell = [1.0 / NUM_CLASSES for _ in range(NUM_CLASSES)]
     row = [cell[:] for _ in range(width)]
     return [row[:] for _ in range(height)]
+
+
+def _normalize_probs(probs: list[float], *, epsilon: float) -> list[float]:
+    out = [max(float(value), epsilon) for value in probs]
+    denom = sum(out)
+    if denom <= 0.0:
+        return [1.0 / NUM_CLASSES for _ in range(NUM_CLASSES)]
+    return [value / denom for value in out]
 
 
 def _normalize_scalar(value: object) -> float:

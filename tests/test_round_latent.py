@@ -99,6 +99,27 @@ def _ruin_observation(seed_index: int = 1) -> ViewportObservation:
     )
 
 
+def _repeated_ruin_observations(*, seed_index: int, repeats: int) -> list[ViewportObservation]:
+    out: list[ViewportObservation] = []
+    for idx in range(repeats):
+        out.append(
+            ViewportObservation(
+                seed_index=seed_index,
+                query_index=idx + 1,
+                grid=[[3 for _ in range(5)] for _ in range(5)],
+                settlements=[],
+                viewport={"x": 0, "y": 0, "w": 5, "h": 5},
+                width=6,
+                height=6,
+                queries_used=idx + 1,
+                queries_max=50,
+                available=True,
+                source="unit-test",
+            )
+        )
+    return out
+
+
 class FixedPolicy:
     def __init__(self, queries: list[dict[str, int]]) -> None:
         self._queries = list(queries)
@@ -219,6 +240,73 @@ class TestRoundLatent(unittest.TestCase):
             self.assertEqual(result.queries_used, 1)
             self.assertEqual(len(result.per_seed), 2)
             self.assertTrue(all(0.0 <= seed.score <= 100.0 for seed in result.per_seed))
+
+    def test_blending_increases_empirical_class_on_observed_cell(self) -> None:
+        model = RoundLatentConditionalModel(
+            config=RoundLatentConfig(
+                class_bias_scale=0.0,
+                min_cell_strength=0.0,
+                dynamic_strength_scale=0.0,
+                enable_observation_blend=True,
+                empirical_neighbor_smoothing=0.0,
+            )
+        )
+        seed0 = _make_seed_state(width=6, height=6)
+        no_obs_state = _make_state(observations=[], queries_used=0)
+        obs_state = _make_state(
+            observations=_repeated_ruin_observations(seed_index=0, repeats=1),
+            queries_used=1,
+        )
+
+        pred_no_obs = model.predict(no_obs_state, seed0, seed_index=0)
+        pred_obs = model.predict(obs_state, seed0, seed_index=0)
+        self.assertGreater(pred_obs[0][0][3], pred_no_obs[0][0][3])
+        self.assertTrue(math.isclose(sum(pred_obs[0][0]), 1.0, abs_tol=1e-9))
+
+    def test_blending_confidence_increases_with_repeated_observations(self) -> None:
+        model = RoundLatentConditionalModel(
+            config=RoundLatentConfig(
+                class_bias_scale=0.0,
+                min_cell_strength=0.0,
+                dynamic_strength_scale=0.0,
+                enable_observation_blend=True,
+                empirical_neighbor_smoothing=0.0,
+            )
+        )
+        seed0 = _make_seed_state(width=6, height=6)
+        one_obs_state = _make_state(
+            observations=_repeated_ruin_observations(seed_index=0, repeats=1),
+            queries_used=1,
+        )
+        three_obs_state = _make_state(
+            observations=_repeated_ruin_observations(seed_index=0, repeats=3),
+            queries_used=3,
+        )
+
+        pred_one = model.predict(one_obs_state, seed0, seed_index=0)
+        pred_three = model.predict(three_obs_state, seed0, seed_index=0)
+        self.assertGreater(pred_three[0][0][3], pred_one[0][0][3])
+
+    def test_unobserved_cells_remain_model_driven_when_blending(self) -> None:
+        model = RoundLatentConditionalModel(
+            config=RoundLatentConfig(
+                class_bias_scale=0.0,
+                min_cell_strength=0.0,
+                dynamic_strength_scale=0.0,
+                enable_observation_blend=True,
+                empirical_neighbor_smoothing=0.0,
+            )
+        )
+        seed0 = _make_seed_state(width=6, height=6)
+        no_obs_state = _make_state(observations=[], queries_used=0)
+        obs_state = _make_state(
+            observations=_repeated_ruin_observations(seed_index=0, repeats=2),
+            queries_used=2,
+        )
+
+        pred_no_obs = model.predict(no_obs_state, seed0, seed_index=0)
+        pred_obs = model.predict(obs_state, seed0, seed_index=0)
+        self.assertTrue(math.isclose(pred_no_obs[5][5][3], pred_obs[5][5][3], abs_tol=1e-9))
 
 
 if __name__ == "__main__":
