@@ -1,5 +1,10 @@
 """Astar Island local tooling package."""
 
+from .importance import (
+    ImportanceConfig,
+    dynamic_importance_map_from_initial_state,
+    dynamic_importance_maps_for_round,
+)
 from .offline_emulator import (
     OfflineRoundResult,
     OfflineRoundState,
@@ -28,6 +33,7 @@ from .submission import floor_and_normalize, serialize_submission, validate_pred
 
 __all__ = [
     "LeaveOneRoundOutSplit",
+    "ImportanceConfig",
     "OfflineRoundResult",
     "OfflineRoundState",
     "PriorConfig",
@@ -38,6 +44,8 @@ __all__ = [
     "ViewportQuery",
     "baseline_prior_for_round",
     "baseline_prior_from_initial_grid",
+    "dynamic_importance_map_from_initial_state",
+    "dynamic_importance_maps_for_round",
     "dynamic_importance_from_prior",
     "floor_and_normalize",
     "leave_one_round_out_splits",

@@ -80,6 +80,7 @@ Outputs:
 - `src/astar_island/round_data.py`: round-centric dataset loader + leave-one-round-out splits
 - `src/astar_island/offline_emulator.py`: replay-backed `run_offline_round(policy, model, round_id)`
 - `src/astar_island/priors.py`: mechanics-first baseline priors + dynamic importance map
+- `src/astar_island/importance.py`: feature-based per-seed dynamic-cell importance heatmaps
 
 ## Tests
 
