@@ -91,6 +91,7 @@ Outputs:
 - `src/astar_island/baseline_b.py`: feature-based non-neural baseline (multinomial logistic regression) + LOO evaluation
 - `src/astar_island/baseline_c.py`: small spatial baseline (local patch softmax) + LOO evaluation
 - `src/astar_island/round_latent.py`: round-latent encoder + latent-conditioned model (`predict(round_state, seed_initial_state, seed_index)`)
+- `src/astar_island/query_policy.py`: deterministic three-phase query scheduler for offline/live probing
 
 ## Step 6: Round Archetype Analysis
 
@@ -216,6 +217,27 @@ Outputs:
 - `outputs/step9_round_latent_eval/round_results.csv`
 - `outputs/step9_round_latent_eval/summary.json`
 - `outputs/step9_round_latent_eval/run_summary.json`
+
+## Step 10: Query Policy Backtest
+
+Run step-10 policy backtest (three-phase scheduler vs simple center-sweep baseline):
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_query_policy.py \
+  --logs-root logs \
+  --output-dir outputs/step10_query_policy_eval \
+  --query-budget 50 \
+  --model latent \
+  --strict
+```
+
+Outputs:
+
+- `outputs/step10_query_policy_eval/seed_results.csv`
+- `outputs/step10_query_policy_eval/round_results.csv`
+- `outputs/step10_query_policy_eval/summary.json`
+- `outputs/step10_query_policy_eval/run_summary.json`
 
 Quick smoke commands:
 

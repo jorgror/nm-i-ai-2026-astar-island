@@ -56,6 +56,10 @@ from .priors import (
     baseline_prior_from_initial_grid,
     dynamic_importance_from_prior,
 )
+from .query_policy import (
+    DeterministicThreePhasePolicyConfig,
+    DeterministicThreePhaseQueryPolicy,
+)
 from .round_data import (
     LeaveOneRoundOutSplit,
     RoundRecord,
@@ -83,6 +87,8 @@ __all__ = [
     "ClusterPoint",
     "ClusteringResult",
     "DEFAULT_FEATURES",
+    "DeterministicThreePhasePolicyConfig",
+    "DeterministicThreePhaseQueryPolicy",
     "DYNAMICS_FEATURES",
     "ImportanceConfig",
     "LeaveOneRoundOutSplit",

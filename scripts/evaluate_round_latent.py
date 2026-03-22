@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,6 +17,10 @@ if str(SRC_DIR) not in sys.path:
 
 from astar_island.offline_emulator import OfflineRoundState, run_offline_round
 from astar_island.priors import baseline_prior_from_initial_grid
+from astar_island.query_policy import (
+    DeterministicThreePhasePolicyConfig,
+    DeterministicThreePhaseQueryPolicy,
+)
 from astar_island.round_data import load_round_dataset
 from astar_island.round_latent import RoundLatentConditionalModel
 
@@ -66,90 +69,6 @@ class PriorOnlyModel:
             seed_initial_state.grid,
             settlements=seed_initial_state.settlements,
         )
-
-
-class DeterministicThreePhasePolicy:
-    """Step-10-like deterministic scheduler used for fair model comparison."""
-
-    def __init__(self, *, query_budget: int = 50, default_window: int = 15) -> None:
-        self.query_budget = query_budget
-        self.default_window = default_window
-        self._plan: list[dict[str, int]] = []
-        self._prepared = False
-
-    def next_query(self, state: OfflineRoundState) -> dict[str, int] | None:
-        if not self._prepared:
-            self._prepare_plan(state)
-            self._prepared = True
-        idx = int(state.queries_used)
-        if idx < 0 or idx >= len(self._plan):
-            return None
-        return self._plan[idx]
-
-    def _prepare_plan(self, state: OfflineRoundState) -> None:
-        if state.seeds_count <= 0:
-            self._plan = []
-            return
-
-        window = min(
-            max(5, int(self.default_window)),
-            int(state.map_width),
-            int(state.map_height),
-        )
-        if window < 5:
-            self._plan = []
-            return
-
-        per_seed_windows: dict[int, list[tuple[int, int]]] = {}
-        for seed_index, initial in enumerate(state.initial_states):
-            if initial is None:
-                per_seed_windows[seed_index] = [(0, 0)]
-                continue
-            importance = _importance_map_for_seed(initial.grid, initial.settlements)
-            top_windows = _top_windows(importance, window=window, count=8, min_center_distance=6.0)
-            center = _center_window(
-                width=state.map_width,
-                height=state.map_height,
-                window=window,
-            )
-            settlement = _settlement_window(
-                settlements=initial.settlements,
-                width=state.map_width,
-                height=state.map_height,
-                window=window,
-            )
-            ordered = [top_windows[0] if top_windows else center, settlement, center]
-            ordered.extend(top_windows[1:])
-            per_seed_windows[seed_index] = _dedupe_windows(ordered)
-
-        # Phase 1 (15): broad calibration, 3 probes per seed.
-        phase1: list[dict[str, int]] = []
-        for seed in range(state.seeds_count):
-            windows = per_seed_windows.get(seed, [(0, 0)])
-            picks = [windows[0], windows[1] if len(windows) > 1 else windows[0], windows[2] if len(windows) > 2 else windows[0]]
-            for x, y in picks:
-                phase1.append(_query(seed, x, y, window))
-
-        # Phase 2 (20): repeated probes on informative motifs, two windows per seed repeated twice.
-        phase2: list[dict[str, int]] = []
-        for seed in range(state.seeds_count):
-            windows = per_seed_windows.get(seed, [(0, 0)])
-            first = windows[0]
-            second = windows[1] if len(windows) > 1 else first
-            phase2.append(_query(seed, first[0], first[1], window))
-            phase2.append(_query(seed, second[0], second[1], window))
-            phase2.append(_query(seed, first[0], first[1], window))
-            phase2.append(_query(seed, second[0], second[1], window))
-
-        # Phase 3 (15): exploit uncertainty, take next three windows per seed.
-        phase3: list[dict[str, int]] = []
-        for seed in range(state.seeds_count):
-            windows = per_seed_windows.get(seed, [(0, 0)])
-            for idx in range(2, 5):
-                pick = windows[idx] if idx < len(windows) else windows[-1]
-                phase3.append(_query(seed, pick[0], pick[1], window))
-
-        self._plan = (phase1 + phase2 + phase3)[: self.query_budget]
 
 
 def parse_args() -> argparse.Namespace:
@@ -216,7 +135,9 @@ def main() -> int:
             probability_floor=args.probability_floor,
         )
         query_prior = run_offline_round(
-            policy=DeterministicThreePhasePolicy(query_budget=args.query_budget),
+            policy=DeterministicThreePhaseQueryPolicy(
+                config=DeterministicThreePhasePolicyConfig(query_budget=args.query_budget)
+            ),
             model=PriorOnlyModel(),
             round_id=record.round_id,
             logs_root=str(logs_root),
@@ -227,7 +148,9 @@ def main() -> int:
             probability_floor=args.probability_floor,
         )
         query_latent = run_offline_round(
-            policy=DeterministicThreePhasePolicy(query_budget=args.query_budget),
+            policy=DeterministicThreePhaseQueryPolicy(
+                config=DeterministicThreePhasePolicyConfig(query_budget=args.query_budget)
+            ),
             model=RoundLatentConditionalModel(),
             round_id=record.round_id,
             logs_root=str(logs_root),
@@ -376,173 +299,6 @@ def _build_summary(
         "mean_queries_used_query_prior": _mean([row.queries_used_query_prior for row in round_rows]),
         "mean_queries_used_query_latent": _mean([row.queries_used_query_latent for row in round_rows]),
     }
-
-
-def _importance_map_for_seed(
-    initial_grid: list[list[int]],
-    settlements,
-) -> list[list[float]]:  # noqa: ANN001
-    prior = baseline_prior_from_initial_grid(initial_grid, settlements=settlements)
-    out: list[list[float]] = []
-    for y, row in enumerate(prior):
-        values: list[float] = []
-        for x, probs in enumerate(row):
-            dynamic_mass = probs[1] + probs[2] + probs[3]
-            entropy = 0.0
-            for p in probs:
-                if p > 0.0:
-                    entropy -= p * math.log(p)
-            ent_norm = entropy / math.log(6.0)
-            coast_bonus = 0.0
-            if _is_coastal(initial_grid, x=x, y=y):
-                coast_bonus = 0.12
-            score = 0.72 * dynamic_mass + 0.20 * ent_norm + coast_bonus
-            values.append(max(0.0, min(1.0, score)))
-        out.append(values)
-    return out
-
-
-def _top_windows(
-    importance: list[list[float]],
-    *,
-    window: int,
-    count: int,
-    min_center_distance: float,
-) -> list[tuple[int, int]]:
-    height = len(importance)
-    width = len(importance[0]) if height > 0 else 0
-    if width <= 0 or height <= 0:
-        return [(0, 0)]
-
-    window = min(window, width, height)
-    max_x = width - window
-    max_y = height - window
-    integral = _integral_image(importance)
-
-    candidates: list[tuple[float, int, int]] = []
-    for y in range(max_y + 1):
-        for x in range(max_x + 1):
-            score = _window_sum(integral, x=x, y=y, w=window, h=window)
-            candidates.append((score, x, y))
-    candidates.sort(reverse=True, key=lambda row: row[0])
-
-    selected: list[tuple[int, int]] = []
-    selected_centers: list[tuple[float, float]] = []
-    for _, x, y in candidates:
-        cx = x + (window / 2.0)
-        cy = y + (window / 2.0)
-        too_close = any(
-            math.dist((cx, cy), (sx, sy)) < min_center_distance
-            for sx, sy in selected_centers
-        )
-        if too_close:
-            continue
-        selected.append((x, y))
-        selected_centers.append((cx, cy))
-        if len(selected) >= count:
-            break
-
-    if not selected:
-        selected.append(_center_window(width=width, height=height, window=window))
-    return selected
-
-
-def _integral_image(values: list[list[float]]) -> list[list[float]]:
-    height = len(values)
-    width = len(values[0]) if height > 0 else 0
-    integral = [[0.0 for _ in range(width + 1)] for _ in range(height + 1)]
-    for y in range(height):
-        row_sum = 0.0
-        for x in range(width):
-            row_sum += values[y][x]
-            integral[y + 1][x + 1] = integral[y][x + 1] + row_sum
-    return integral
-
-
-def _window_sum(integral: list[list[float]], *, x: int, y: int, w: int, h: int) -> float:
-    y2 = y + h
-    x2 = x + w
-    return (
-        integral[y2][x2]
-        - integral[y][x2]
-        - integral[y2][x]
-        + integral[y][x]
-    )
-
-
-def _center_window(*, width: int, height: int, window: int) -> tuple[int, int]:
-    max_x = max(0, width - window)
-    max_y = max(0, height - window)
-    return (max_x // 2, max_y // 2)
-
-
-def _settlement_window(
-    *,
-    settlements,
-    width: int,
-    height: int,
-    window: int,
-) -> tuple[int, int]:  # noqa: ANN001
-    alive = [settlement for settlement in settlements if bool(settlement.alive)]
-    pick = alive[0] if alive else (settlements[0] if settlements else None)
-    if pick is None:
-        return _center_window(width=width, height=height, window=window)
-    sx = int(pick.x)
-    sy = int(pick.y)
-    return _clamp_window_top_left(
-        x=sx - (window // 2),
-        y=sy - (window // 2),
-        width=width,
-        height=height,
-        window=window,
-    )
-
-
-def _dedupe_windows(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    seen: set[tuple[int, int]] = set()
-    out: list[tuple[int, int]] = []
-    for point in points:
-        if point in seen:
-            continue
-        seen.add(point)
-        out.append(point)
-    return out
-
-
-def _query(seed_index: int, x: int, y: int, window: int) -> dict[str, int]:
-    return {
-        "seed_index": seed_index,
-        "viewport_x": x,
-        "viewport_y": y,
-        "viewport_w": window,
-        "viewport_h": window,
-    }
-
-
-def _is_coastal(grid: list[list[int]], *, x: int, y: int) -> bool:
-    for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
-        nx = x + dx
-        ny = y + dy
-        if ny < 0 or ny >= len(grid):
-            continue
-        if nx < 0 or nx >= len(grid[ny]):
-            continue
-        if int(grid[ny][nx]) == 10:
-            return True
-    return False
-
-
-def _clamp_window_top_left(
-    *,
-    x: int,
-    y: int,
-    width: int,
-    height: int,
-    window: int,
-) -> tuple[int, int]:
-    max_x = max(0, width - window)
-    max_y = max(0, height - window)
-    return (min(max(x, 0), max_x), min(max(y, 0), max_y))
 
 
 def _mean(values: list[float | int]) -> float:
