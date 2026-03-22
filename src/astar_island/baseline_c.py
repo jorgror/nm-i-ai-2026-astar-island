@@ -13,7 +13,7 @@ from pathlib import Path
 from .models import SeedInitialState, Tensor3D
 from .priors import baseline_prior_from_initial_grid
 from .round_data import LeaveOneRoundOutSplit, load_leave_one_round_out
-from .scoring import score_round, score_seed
+from .scoring import cell_entropy, score_from_weighted_kl, score_round, score_seed
 from .submission import floor_and_normalize
 
 NUM_CLASSES = 6
@@ -36,12 +36,24 @@ GRID_TO_CLASS = {
 class BaselineCConfig:
     patch_radius: int = 1
     learning_rate: float = 0.04
-    epochs: int = 5
+    epochs: int = 3
     l2: float = 1e-4
-    samples_per_epoch: int = 25000
-    max_cells_per_seed: int | None = 1000
+    samples_per_epoch: int = 12000
+    max_cells_per_seed: int | None = 900
+    entropy_weight_power: float = 1.0
+    min_entropy_weight: float = 0.02
     probability_floor: float = 1e-4
-    random_seed: int = 11
+    random_seed: int = 7
+
+
+@dataclass(slots=True)
+class TrainingEpochMetric:
+    epoch: int
+    learning_rate: float
+    weighted_kl: float
+    weighted_cross_entropy: float
+    round_score: float
+    sample_count: int
 
 
 @dataclass(slots=True)
@@ -93,6 +105,8 @@ class BaselineCReport:
     mean_round_score_baseline_c: float
     mean_round_score_prior_a: float
     mean_round_gain_vs_prior_a: float
+    mean_training_weighted_kl_by_epoch: list[float]
+    mean_training_round_score_by_epoch: list[float]
 
     def write(self, output_dir: str | Path) -> dict[str, str]:
         out_dir = Path(output_dir)
@@ -114,6 +128,8 @@ class BaselineCReport:
                     "mean_round_score_baseline_c": self.mean_round_score_baseline_c,
                     "mean_round_score_prior_a": self.mean_round_score_prior_a,
                     "mean_round_gain_vs_prior_a": self.mean_round_gain_vs_prior_a,
+                    "mean_training_weighted_kl_by_epoch": self.mean_training_weighted_kl_by_epoch,
+                    "mean_training_round_score_by_epoch": self.mean_training_round_score_by_epoch,
                 },
                 indent=2,
             ),
@@ -139,9 +155,11 @@ def evaluate_baseline_c_leave_one_round_out(
     feature_cache: dict[tuple[str, int], list[list[list[float]]]] = {}
     seed_results: list[SeedSpatialResult] = []
     round_results: list[RoundSpatialResult] = []
+    split_training_history: list[list[TrainingEpochMetric]] = []
 
     for split in splits:
-        model = _train_for_split(split, cfg, feature_cache, rng)
+        model, training_history = _train_for_split(split, cfg, feature_cache, rng)
+        split_training_history.append(training_history)
         validation_round = split.validation_round
 
         c_scores: list[float] = []
@@ -213,6 +231,12 @@ def evaluate_baseline_c_leave_one_round_out(
     mean_seed_a = _mean([row.score_prior_a for row in seed_results])
     mean_round_c = _mean([row.round_score_baseline_c for row in round_results])
     mean_round_a = _mean([row.round_score_prior_a for row in round_results])
+    mean_training_weighted_kl_by_epoch = _aggregate_epoch_metric(
+        split_training_history, metric_name="weighted_kl"
+    )
+    mean_training_round_score_by_epoch = _aggregate_epoch_metric(
+        split_training_history, metric_name="round_score"
+    )
 
     return BaselineCReport(
         config=cfg,
@@ -224,6 +248,8 @@ def evaluate_baseline_c_leave_one_round_out(
         mean_round_score_baseline_c=mean_round_c,
         mean_round_score_prior_a=mean_round_a,
         mean_round_gain_vs_prior_a=mean_round_c - mean_round_a,
+        mean_training_weighted_kl_by_epoch=mean_training_weighted_kl_by_epoch,
+        mean_training_round_score_by_epoch=mean_training_round_score_by_epoch,
     )
 
 
@@ -232,7 +258,7 @@ def _train_for_split(
     cfg: BaselineCConfig,
     feature_cache: dict[tuple[str, int], list[list[list[float]]]],
     rng: random.Random,
-) -> SpatialSoftmaxModel:
+) -> tuple[SpatialSoftmaxModel, list[TrainingEpochMetric]]:
     features: list[list[float]] = []
     targets: list[list[float]] = []
 
@@ -263,6 +289,7 @@ def _train_for_split(
         targets=targets,
         config=cfg,
         rng=rng,
+        return_history=True,
     )
 
 
@@ -272,7 +299,8 @@ def train_spatial_softmax_model(
     targets: list[list[float]],
     config: BaselineCConfig,
     rng: random.Random,
-) -> SpatialSoftmaxModel:
+    return_history: bool = False,
+) -> tuple[SpatialSoftmaxModel, list[TrainingEpochMetric]] | SpatialSoftmaxModel:
     if not features or not targets:
         raise ValueError("Need non-empty features and targets")
     if len(features) != len(targets):
@@ -286,13 +314,21 @@ def train_spatial_softmax_model(
     biases = [0.0 for _ in range(num_classes)]
     indices = list(range(len(features)))
     updates_per_epoch = min(config.samples_per_epoch, len(indices))
+    sample_weights = _entropy_weights_for_targets(
+        targets,
+        power=config.entropy_weight_power,
+        min_weight=config.min_entropy_weight,
+    )
+    history: list[TrainingEpochMetric] = []
 
     for epoch in range(config.epochs):
         rng.shuffle(indices)
         lr = config.learning_rate * (0.85**epoch)
-        for idx in indices[:updates_per_epoch]:
+        epoch_indices = indices[:updates_per_epoch]
+        for idx in epoch_indices:
             x_vec = features[idx]
             y_true = targets[idx]
+            ent_weight = sample_weights[idx]
 
             logits = [
                 _dot(weights[class_idx], x_vec) + biases[class_idx]
@@ -301,7 +337,7 @@ def train_spatial_softmax_model(
             probs = _softmax(logits)
 
             for class_idx in range(num_classes):
-                diff = probs[class_idx] - y_true[class_idx]
+                diff = ent_weight * (probs[class_idx] - y_true[class_idx])
                 if diff == 0.0:
                     continue
                 row = weights[class_idx]
@@ -309,12 +345,29 @@ def train_spatial_softmax_model(
                     row[feat_idx] -= lr * ((diff * value) + (config.l2 * row[feat_idx]))
                 biases[class_idx] -= lr * diff
 
-    return SpatialSoftmaxModel(
+        history.append(
+            _summarize_epoch(
+                epoch=epoch + 1,
+                learning_rate=lr,
+                indices=epoch_indices,
+                features=features,
+                targets=targets,
+                sample_weights=sample_weights,
+                weights=weights,
+                biases=biases,
+                probability_floor=config.probability_floor,
+            )
+        )
+
+    model = SpatialSoftmaxModel(
         feature_names=spatial_feature_names(config.patch_radius),
         weights=weights,
         biases=biases,
         patch_radius=config.patch_radius,
     )
+    if return_history:
+        return model, history
+    return model
 
 
 def predict_with_spatial_model(
@@ -572,6 +625,114 @@ def _softmax(logits: list[float]) -> list[float]:
 
 def _dot(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
+
+
+def _summarize_epoch(
+    *,
+    epoch: int,
+    learning_rate: float,
+    indices: list[int],
+    features: list[list[float]],
+    targets: list[list[float]],
+    sample_weights: list[float],
+    weights: list[list[float]],
+    biases: list[float],
+    probability_floor: float,
+) -> TrainingEpochMetric:
+    weighted_kl_sum = 0.0
+    weighted_cross_entropy_sum = 0.0
+    weight_sum = 0.0
+
+    for idx in indices:
+        x_vec = features[idx]
+        y_true = targets[idx]
+        ent_weight = sample_weights[idx]
+        logits = [
+            _dot(weights[class_idx], x_vec) + biases[class_idx]
+            for class_idx in range(len(weights))
+        ]
+        probs = _softmax(logits)
+        probs = _floor_distribution(probs, floor=probability_floor)
+        kl, cross_entropy = _kl_and_cross_entropy(y_true, probs)
+
+        weighted_kl_sum += ent_weight * kl
+        weighted_cross_entropy_sum += ent_weight * cross_entropy
+        weight_sum += ent_weight
+
+    if weight_sum <= 0.0:
+        weighted_kl_value = 0.0
+        weighted_cross_entropy_value = 0.0
+    else:
+        weighted_kl_value = weighted_kl_sum / weight_sum
+        weighted_cross_entropy_value = weighted_cross_entropy_sum / weight_sum
+
+    return TrainingEpochMetric(
+        epoch=epoch,
+        learning_rate=learning_rate,
+        weighted_kl=weighted_kl_value,
+        weighted_cross_entropy=weighted_cross_entropy_value,
+        round_score=score_from_weighted_kl(weighted_kl_value),
+        sample_count=len(indices),
+    )
+
+
+def _entropy_weights_for_targets(
+    targets: list[list[float]],
+    *,
+    power: float,
+    min_weight: float,
+) -> list[float]:
+    if power <= 0.0:
+        raise ValueError("entropy_weight_power must be > 0")
+    if min_weight < 0.0:
+        raise ValueError("min_entropy_weight must be >= 0")
+
+    weights: list[float] = []
+    for target in targets:
+        entropy = cell_entropy(target)
+        scaled = entropy**power
+        weights.append(max(min_weight, scaled))
+    return weights
+
+
+def _floor_distribution(probs: list[float], *, floor: float) -> list[float]:
+    if floor <= 0.0:
+        return probs
+    floored = [max(value, floor) for value in probs]
+    total = sum(floored)
+    if total <= 0.0:
+        return [1.0 / len(probs)] * len(probs)
+    return [value / total for value in floored]
+
+
+def _kl_and_cross_entropy(y_true: list[float], probs: list[float]) -> tuple[float, float]:
+    kl = 0.0
+    cross_entropy = 0.0
+    for truth, pred in zip(y_true, probs):
+        if truth <= 0.0:
+            continue
+        cross_entropy -= truth * math.log(pred)
+        kl += truth * math.log(truth / pred)
+    return kl, cross_entropy
+
+
+def _aggregate_epoch_metric(
+    histories: list[list[TrainingEpochMetric]],
+    *,
+    metric_name: str,
+) -> list[float]:
+    if not histories:
+        return []
+    max_epochs = max((len(history) for history in histories), default=0)
+    output: list[float] = []
+    for epoch_idx in range(max_epochs):
+        values: list[float] = []
+        for history in histories:
+            if epoch_idx >= len(history):
+                continue
+            values.append(float(getattr(history[epoch_idx], metric_name)))
+        output.append(_mean(values))
+    return output
 
 
 def _mean(values: list[float]) -> float:

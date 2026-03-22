@@ -25,14 +25,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(REPO_ROOT / "outputs" / "step7_baseline_b"),
+        default=str(REPO_ROOT / "outputs" / "step8_baseline_b"),
         help="Output folder for LOO evaluation artifacts.",
     )
-    parser.add_argument("--learning-rate", type=float, default=0.05)
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, default=0.06)
+    parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--l2", type=float, default=1e-4)
-    parser.add_argument("--samples-per-epoch", type=int, default=25000)
+    parser.add_argument("--samples-per-epoch", type=int, default=20000)
     parser.add_argument("--max-cells-per-seed", type=int, default=1000)
+    parser.add_argument("--entropy-weight-power", type=float, default=0.8)
+    parser.add_argument("--min-entropy-weight", type=float, default=0.02)
     parser.add_argument("--probability-floor", type=float, default=1e-4)
     parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument(
@@ -51,6 +53,8 @@ def main() -> int:
         l2=args.l2,
         samples_per_epoch=args.samples_per_epoch,
         max_cells_per_seed=args.max_cells_per_seed,
+        entropy_weight_power=args.entropy_weight_power,
+        min_entropy_weight=args.min_entropy_weight,
         probability_floor=args.probability_floor,
         random_seed=args.random_seed,
     )
@@ -71,6 +75,14 @@ def main() -> int:
     print(f"mean_round_score_baseline_b={report.mean_round_score_baseline_b:.6f}")
     print(f"mean_round_score_prior_a={report.mean_round_score_prior_a:.6f}")
     print(f"mean_round_gain_vs_prior_a={report.mean_round_gain_vs_prior_a:+.6f}")
+    if report.mean_training_weighted_kl_by_epoch:
+        print("mean_training_weighted_kl_by_epoch:")
+        for epoch_idx, value in enumerate(report.mean_training_weighted_kl_by_epoch, start=1):
+            print(f"  epoch_{epoch_idx}: {value:.6f}")
+    if report.mean_training_round_score_by_epoch:
+        print("mean_training_round_score_by_epoch:")
+        for epoch_idx, value in enumerate(report.mean_training_round_score_by_epoch, start=1):
+            print(f"  epoch_{epoch_idx}: {value:.6f}")
     print("output_files:")
     for key, value in output_paths.items():
         print(f"  {key}: {value}")
@@ -84,6 +96,8 @@ def main() -> int:
         "mean_round_score_baseline_b": report.mean_round_score_baseline_b,
         "mean_round_score_prior_a": report.mean_round_score_prior_a,
         "mean_round_gain_vs_prior_a": report.mean_round_gain_vs_prior_a,
+        "mean_training_weighted_kl_by_epoch": report.mean_training_weighted_kl_by_epoch,
+        "mean_training_round_score_by_epoch": report.mean_training_round_score_by_epoch,
         "output_files": output_paths,
     }
     summary_path = Path(args.output_dir) / "run_summary.json"

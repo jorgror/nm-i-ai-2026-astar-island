@@ -26,17 +26,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(REPO_ROOT / "outputs" / "step7_baseline_c"),
+        default=str(REPO_ROOT / "outputs" / "step8_baseline_c"),
         help="Output folder for LOO evaluation artifacts.",
     )
     parser.add_argument("--patch-radius", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=0.04)
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--l2", type=float, default=1e-4)
-    parser.add_argument("--samples-per-epoch", type=int, default=25000)
-    parser.add_argument("--max-cells-per-seed", type=int, default=1000)
+    parser.add_argument("--samples-per-epoch", type=int, default=12000)
+    parser.add_argument("--max-cells-per-seed", type=int, default=900)
+    parser.add_argument("--entropy-weight-power", type=float, default=1.0)
+    parser.add_argument("--min-entropy-weight", type=float, default=0.02)
     parser.add_argument("--probability-floor", type=float, default=1e-4)
-    parser.add_argument("--random-seed", type=int, default=11)
+    parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -64,6 +66,8 @@ def main() -> int:
         l2=args.l2,
         samples_per_epoch=args.samples_per_epoch,
         max_cells_per_seed=args.max_cells_per_seed,
+        entropy_weight_power=args.entropy_weight_power,
+        min_entropy_weight=args.min_entropy_weight,
         probability_floor=args.probability_floor,
         random_seed=args.random_seed,
     )
@@ -84,6 +88,14 @@ def main() -> int:
     print(f"mean_round_score_baseline_c={report.mean_round_score_baseline_c:.6f}")
     print(f"mean_round_score_prior_a={report.mean_round_score_prior_a:.6f}")
     print(f"mean_round_gain_vs_prior_a={report.mean_round_gain_vs_prior_a:+.6f}")
+    if report.mean_training_weighted_kl_by_epoch:
+        print("mean_training_weighted_kl_by_epoch:")
+        for epoch_idx, value in enumerate(report.mean_training_weighted_kl_by_epoch, start=1):
+            print(f"  epoch_{epoch_idx}: {value:.6f}")
+    if report.mean_training_round_score_by_epoch:
+        print("mean_training_round_score_by_epoch:")
+        for epoch_idx, value in enumerate(report.mean_training_round_score_by_epoch, start=1):
+            print(f"  epoch_{epoch_idx}: {value:.6f}")
 
     comparison: dict[str, float] = {}
     if args.baseline_b_seed_csv and Path(args.baseline_b_seed_csv).exists():
@@ -115,6 +127,8 @@ def main() -> int:
         "mean_round_score_baseline_c": report.mean_round_score_baseline_c,
         "mean_round_score_prior_a": report.mean_round_score_prior_a,
         "mean_round_gain_vs_prior_a": report.mean_round_gain_vs_prior_a,
+        "mean_training_weighted_kl_by_epoch": report.mean_training_weighted_kl_by_epoch,
+        "mean_training_round_score_by_epoch": report.mean_training_round_score_by_epoch,
         "comparison": comparison,
         "output_files": output_paths,
     }

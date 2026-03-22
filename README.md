@@ -1,4 +1,4 @@
-# Astar Island Local Tooling (Steps 1-6)
+# Astar Island Local Tooling (Steps 1-8)
 
 This repository includes local Python tooling for the early execution phases from `MASTERPLAN.md`:
 
@@ -11,6 +11,7 @@ This repository includes local Python tooling for the early execution phases fro
 - run replay-backed offline round emulation
 - generate mechanics-first priors and dynamic-cell importance maps
 - compute round fingerprints + clustering artifacts for round archetype analysis
+- train with entropy-weighted objective and report epoch-level weighted KL / round score
 
 ## Setup (`.venv`)
 
@@ -134,6 +135,8 @@ PYTHONPATH=src python scripts/evaluate_baseline_b.py \
   --output-dir outputs/step7_baseline_b \
   --learning-rate 0.05 \
   --epochs 5 \
+  --entropy-weight-power 1.0 \
+  --min-entropy-weight 0.02 \
   --samples-per-epoch 25000 \
   --max-cells-per-seed 1000
 ```
@@ -157,6 +160,8 @@ PYTHONPATH=src python scripts/evaluate_baseline_c.py \
   --patch-radius 1 \
   --learning-rate 0.04 \
   --epochs 5 \
+  --entropy-weight-power 1.0 \
+  --min-entropy-weight 0.02 \
   --samples-per-epoch 25000 \
   --max-cells-per-seed 1000
 ```
@@ -176,6 +181,41 @@ Outputs:
 - `outputs/step7_baseline_c/loo_round_results.csv`
 - `outputs/step7_baseline_c/summary.json`
 - `outputs/step7_baseline_c/run_summary.json`
+
+## Step 8: Official-Objective Training Metrics
+
+Baseline B/C training now applies entropy-weighted gradients (high-entropy cells get higher influence)
+and reports epoch-level:
+
+- `mean_training_weighted_kl_by_epoch`
+- `mean_training_round_score_by_epoch`
+
+Current default settings are tuned from the step-8 sweep:
+
+- Baseline B defaults: `b4` (`lr=0.06`, `epochs=4`, `samples_per_epoch=20000`, `entropy_weight_power=0.8`)
+- Baseline C defaults: `c1` (`patch_radius=1`, `lr=0.04`, `epochs=3`, `samples_per_epoch=12000`)
+
+Quick smoke commands:
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_baseline_b.py \
+  --logs-root logs \
+  --output-dir outputs/step8_smoke_b \
+  --epochs 1 \
+  --samples-per-epoch 300 \
+  --max-cells-per-seed 200
+```
+
+```bash
+. .venv/bin/activate
+PYTHONPATH=src python scripts/evaluate_baseline_c.py \
+  --logs-root logs \
+  --output-dir outputs/step8_smoke_c \
+  --epochs 1 \
+  --samples-per-epoch 300 \
+  --max-cells-per-seed 200
+```
 
 ## Tests
 

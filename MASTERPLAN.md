@@ -144,6 +144,7 @@ probability floor before normalization.
 Because the official score is entropy-weighted KL, a model that is slightly blurrier but calibrated will beat a sharp model that puts near-zero mass on real outcomes. The official docs explicitly warn against zero probabilities and recommend a floor before renormalization.
 
 Deliverable: training loop reporting weighted KL and round score, not just accuracy.
+Status (2026-03-22): implemented in Baseline B/C trainers and evaluator outputs (`summary.json` / `run_summary.json`).
 
 9. Build a round-latent inference layer
 

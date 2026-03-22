@@ -191,6 +191,8 @@ class TestBaselineB(unittest.TestCase):
                     l2=1e-4,
                     samples_per_epoch=128,
                     max_cells_per_seed=16,
+                    entropy_weight_power=1.0,
+                    min_entropy_weight=0.02,
                     probability_floor=1e-4,
                     random_seed=7,
                 ),
@@ -200,6 +202,12 @@ class TestBaselineB(unittest.TestCase):
             self.assertEqual(len(report.seed_results), 4)
             self.assertTrue(all(0.0 <= row.score_baseline_b <= 100.0 for row in report.seed_results))
             self.assertTrue(all(0.0 <= row.score_prior_a <= 100.0 for row in report.seed_results))
+            self.assertEqual(len(report.mean_training_weighted_kl_by_epoch), 4)
+            self.assertEqual(len(report.mean_training_round_score_by_epoch), 4)
+            self.assertTrue(all(value >= 0.0 for value in report.mean_training_weighted_kl_by_epoch))
+            self.assertTrue(
+                all(0.0 <= value <= 100.0 for value in report.mean_training_round_score_by_epoch)
+            )
 
 
 if __name__ == "__main__":
