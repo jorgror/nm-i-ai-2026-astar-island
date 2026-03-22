@@ -78,6 +78,7 @@ Outputs:
 - `src/astar_island/submission.py`: validator + serializer + probability floor
 - `src/astar_island/visualization.py`: SVG visualizers
 - `src/astar_island/round_data.py`: round-centric dataset loader + leave-one-round-out splits
+- `src/astar_island/offline_emulator.py`: replay-backed `run_offline_round(policy, model, round_id)`
 
 ## Tests
 

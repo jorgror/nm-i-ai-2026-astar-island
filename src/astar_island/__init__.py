@@ -1,5 +1,13 @@
 """Astar Island local tooling package."""
 
+from .offline_emulator import (
+    OfflineRoundResult,
+    OfflineRoundState,
+    SeedEvaluation,
+    ViewportObservation,
+    ViewportQuery,
+    run_offline_round,
+)
 from .parsing import load_json, parse_analysis_seed, parse_round_detail, parse_round_score
 from .round_data import (
     LeaveOneRoundOutSplit,
@@ -14,8 +22,13 @@ from .submission import floor_and_normalize, serialize_submission, validate_pred
 
 __all__ = [
     "LeaveOneRoundOutSplit",
+    "OfflineRoundResult",
+    "OfflineRoundState",
     "RoundRecord",
     "RoundSeedRecord",
+    "SeedEvaluation",
+    "ViewportObservation",
+    "ViewportQuery",
     "floor_and_normalize",
     "leave_one_round_out_splits",
     "load_json",
@@ -27,6 +40,7 @@ __all__ = [
     "score_round",
     "score_seed",
     "serialize_submission",
+    "run_offline_round",
     "validate_prediction_tensor",
     "weighted_kl",
 ]
